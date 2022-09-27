@@ -10,10 +10,14 @@
 # Results (mostly equal error-rates) are inline in comments below.
 # 结果（大部分是EER指标）在下面的注释中显示。
 
-
+# 运行./cmd.sh。目的是设置队列的类型。queue.pl/slurm.pl：执行程序需要排队；run.pl：无需排队（但可能会消耗大量内存）。
 . ./cmd.sh
+# 运行./path.sh。目的是导入kaldi库的根目录以及其他目录。
 . ./path.sh
+# Linux里面set-e命令作用是，如果一个命令返回一个非0退出状态值(失败)，就退出，不会继续执行。
 set -e
+# Mel频率倒谱系数(Mel Frequency Cepstrum Coefficient,MFCC)
+# 【TODO1】 设置mfcc路径
 mfccdir=`pwd`/mfcc
 vaddir=`pwd`/mfcc
 
