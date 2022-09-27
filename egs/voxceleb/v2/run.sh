@@ -6,7 +6,10 @@
 # Apache 2.0.
 #
 # See ../README.txt for more info on data required.
+# 请参阅../README.txt获取所需数据的更多信息。
 # Results (mostly equal error-rates) are inline in comments below.
+# 结果（大部分是EER指标）在下面的注释中显示。
+
 
 . ./cmd.sh
 . ./path.sh
