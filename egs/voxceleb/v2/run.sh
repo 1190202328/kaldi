@@ -17,36 +17,50 @@
 # Linux里面set-e命令作用是，如果一个命令返回一个非0退出状态值(失败)，就退出，不会继续执行。
 set -e
 # Mel频率倒谱系数(Mel Frequency Cepstrum Coefficient,MFCC)
-# 【TODO1】 设置mfcc路径
+# mfcc文件的存放路径
 mfccdir=`pwd`/mfcc
+# VAD，语音活动检测(Voice Activity Detection,VAD)又称语音端点检测,语音边界检测。目的是从声音信号流里识别和消除长时间的静音期。
+# vad文件的存放路径
 vaddir=`pwd`/mfcc
 
 
 # The trials file is downloaded by local/make_voxceleb1_v2.pl.
+# 测试文件由local/make_voxceleb1_v2.pl下载。
 voxceleb1_trials=data/voxceleb1_test/trials
 voxceleb1_root=/export/corpora/VoxCeleb1
 voxceleb2_root=/export/corpora/VoxCeleb2
 nnet_dir=exp/xvector_nnet_1a
 musan_root=/export/corpora/JHU/musan
 
+# 用于标记算法运行到的阶段
 stage=0
 
 if [ $stage -le 0 ]; then
+  # 阶段0，下载数据集
   local/make_voxceleb2.pl $voxceleb2_root dev data/voxceleb2_train
   local/make_voxceleb2.pl $voxceleb2_root test data/voxceleb2_test
   # This script creates data/voxceleb1_test and data/voxceleb1_train for latest version of VoxCeleb1.
+  # 此脚本为最新版本的voxceleb1创建data/voxceleb1_test和data/voxceleb1_train。
   # Our evaluation set is the test portion of VoxCeleb1.
+  # 我们的验证集是VoxCeleb1的测试集的一部分。
   local/make_voxceleb1_v2.pl $voxceleb1_root dev data/voxceleb1_train
   local/make_voxceleb1_v2.pl $voxceleb1_root test data/voxceleb1_test
   # if you downloaded the dataset soon after it was released, you will want to use the make_voxceleb1.pl script instead.
+  # 如果在数据集发布后不久就下载了它，那么应该改用makevoxceleb1.pl脚本。
   # local/make_voxceleb1.pl $voxceleb1_root data
   # We'll train on all of VoxCeleb2, plus the training portion of VoxCeleb1.
+  # 我们将对所有VoxCeleb2以及VoxCelet1的训练集训练。
   # This should give 7,323 speakers and 1,276,888 utterances.
+  # 包含7323名发言者和1,276,888人次发言。
   utils/combine_data.sh data/train data/voxceleb2_train data/voxceleb2_test data/voxceleb1_train
 fi
 
 if [ $stage -le 1 ]; then
+  # 阶段1，提取MFCC和VAD
   # Make MFCCs and compute the energy-based VAD for each dataset
+  # 生成MFCC并计算每个数据集的基于能量的VAD
+  # 梅尔倒谱系数（mfcc）
+  # 提取过程：连续语音--预加重--加窗分帧--FFT--MEL滤波器组--对数运算--DCT
   for name in train voxceleb1_test; do
     steps/make_mfcc.sh --write-utt2num-frames true --mfcc-config conf/mfcc.conf --nj 40 --cmd "$train_cmd" \
       data/${name} exp/make_mfcc $mfccdir
@@ -59,23 +73,29 @@ fi
 
 # In this section, we augment the VoxCeleb2 data with reverberation,
 # noise, music, and babble, and combine it with the clean data.
+# 在阶段中，我们将使用混响、噪音、音乐和杂音来增强VoxCeleb2数据，并将其与干净的数据相混合。【数据增广】
 if [ $stage -le 2 ]; then
+  # 阶段2，为训练集进行数据增广
   frame_shift=0.01
   awk -v frame_shift=$frame_shift '{print $1, $2*frame_shift;}' data/train/utt2num_frames > data/train/reco2dur
 
   if [ ! -d "RIRS_NOISES" ]; then
     # Download the package that includes the real RIRs, simulated RIRs, isotropic noises and point-source noises
+    # 下载包含real RIR、simulated RIR、各向同性噪声和点源噪声的软件包
+    # RIR_NOISES数据集， 见README.txt
     wget --no-check-certificate http://www.openslr.org/resources/28/rirs_noises.zip
     unzip rirs_noises.zip
   fi
 
   # Make a version with reverberated speech
+  # 制作带有回响语音的版本
   rvb_opts=()
   rvb_opts+=(--rir-set-parameters "0.5, RIRS_NOISES/simulated_rirs/smallroom/rir_list")
   rvb_opts+=(--rir-set-parameters "0.5, RIRS_NOISES/simulated_rirs/mediumroom/rir_list")
 
   # Make a reverberated version of the VoxCeleb2 list.  Note that we don't add any
   # additive noise here.
+  # 制作VoxCeleb2列表的混响版本。请注意，我们这里没有添加任何附加噪声。
   steps/data/reverberate_data_dir.py \
     "${rvb_opts[@]}" \
     --speech-rvb-probability 1 \
@@ -91,47 +111,62 @@ if [ $stage -le 2 ]; then
 
   # Prepare the MUSAN corpus, which consists of music, speech, and noise
   # suitable for augmentation.
+  # 准备MUSAN数据集，该语料库由适合扩充的音乐、语音和噪音组成。
   steps/data/make_musan.sh --sampling-rate 16000 $musan_root data
 
   # Get the duration of the MUSAN recordings.  This will be used by the
   # script augment_data_dir.py.
+  # 获取MUSAN录制的持续时间。这将由脚本augment_data_dir.py使用。
   for name in speech noise music; do
     utils/data/get_utt2dur.sh data/musan_${name}
     mv data/musan_${name}/utt2dur data/musan_${name}/reco2dur
   done
 
   # Augment with musan_noise
+  # 添加musan_noise
   steps/data/augment_data_dir.py --utt-suffix "noise" --fg-interval 1 --fg-snrs "15:10:5:0" --fg-noise-dir "data/musan_noise" data/train data/train_noise
   # Augment with musan_music
+  # 添加musan_music
   steps/data/augment_data_dir.py --utt-suffix "music" --bg-snrs "15:10:8:5" --num-bg-noises "1" --bg-noise-dir "data/musan_music" data/train data/train_music
   # Augment with musan_speech
+  # 添加musan_speech
   steps/data/augment_data_dir.py --utt-suffix "babble" --bg-snrs "20:17:15:13" --num-bg-noises "3:4:5:6:7" --bg-noise-dir "data/musan_speech" data/train data/train_babble
 
   # Combine reverb, noise, music, and babble into one directory.
+  # 将混响、噪音、音乐和胡言乱语的数据组合到一个目录中。
   utils/combine_data.sh data/train_aug data/train_reverb data/train_noise data/train_music data/train_babble
 fi
 
 if [ $stage -le 3 ]; then
+  # 阶段3，为增广数据集提MFCC特征
   # Take a random subset of the augmentations
+  # 选取一个随机的数据增广子集
   utils/subset_data_dir.sh data/train_aug 1000000 data/train_aug_1m
   utils/fix_data_dir.sh data/train_aug_1m
 
   # Make MFCCs for the augmented data.  Note that we do not compute a new
   # vad.scp file here.  Instead, we use the vad.scp from the clean version of
   # the list.
+  # 为增广数据集制作MFCC。注意，我们没有计算新的vad.scp文件。相反，我们使用列表的clean版本中的vad.scp（VAD不进行需要在增广数据集上提取）。
   steps/make_mfcc.sh --mfcc-config conf/mfcc.conf --nj 40 --cmd "$train_cmd" \
     data/train_aug_1m exp/make_mfcc $mfccdir
 
   # Combine the clean and augmented VoxCeleb2 list.  This is now roughly
   # double the size of the original clean list.
+  # 合并干净和增强的VoxCeleb2列表。这大约是原始clean列表大小的两倍。
   utils/combine_data.sh data/train_combined data/train_aug_1m data/train
 fi
 
 # Now we prepare the features to generate examples for xvector training.
+# 现在我们准备xvector训练集的样本的特征。
 if [ $stage -le 4 ]; then
+  # 阶段4，准备样本特征
   # This script applies CMVN and removes nonspeech frames.  Note that this is somewhat
   # wasteful, as it roughly doubles the amount of training data on disk.  After
   # creating training examples, this can be removed.
+  # 此脚本应用CMVN并删除非语音帧。请注意，这有点浪费，因为它大约使磁盘上的训练数据量增加了一倍。创建训练示例后，可以将其删除。
+  # CMVN，倒谱均值方差归一化
+  # 
   local/nnet3/xvector/prepare_feats_for_egs.sh --nj 40 --cmd "$train_cmd" \
     data/train_combined data/train_combined_no_sil exp/train_combined_no_sil
   utils/fix_data_dir.sh data/train_combined_no_sil
