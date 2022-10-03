@@ -18,11 +18,10 @@
 set -e
 # Mel频率倒谱系数(Mel Frequency Cepstrum Coefficient,MFCC)
 # mfcc文件的存放路径
-mfccdir=`pwd`/mfcc
+mfccdir=$(pwd)/mfcc
 # VAD，语音活动检测(Voice Activity Detection,VAD)又称语音端点检测,语音边界检测。目的是从声音信号流里识别和消除长时间的静音期。
 # vad文件的存放路径
-vaddir=`pwd`/mfcc
-
+vaddir=$(pwd)/mfcc
 
 # The trials file is downloaded by local/make_voxceleb1_v2.pl.
 # 测试文件由local/make_voxceleb1_v2.pl下载。
@@ -77,7 +76,7 @@ fi
 if [ $stage -le 2 ]; then
   # 阶段2，为训练集进行数据增广
   frame_shift=0.01
-  awk -v frame_shift=$frame_shift '{print $1, $2*frame_shift;}' data/train/utt2num_frames > data/train/reco2dur
+  awk -v frame_shift=$frame_shift '{print $1, $2*frame_shift;}' data/train/utt2num_frames >data/train/reco2dur
 
   if [ ! -d "RIRS_NOISES" ]; then
     # Download the package that includes the real RIRs, simulated RIRs, isotropic noises and point-source noises
@@ -166,87 +165,102 @@ if [ $stage -le 4 ]; then
   # creating training examples, this can be removed.
   # 此脚本应用CMVN并删除非语音帧。请注意，这有点浪费，因为它大约使磁盘上的训练数据量增加了一倍。创建训练示例后，可以将其删除。
   # CMVN，倒谱均值方差归一化
-  # 
+  # 提取声学特征以后，将声学特征从一个空间转变成另一个空间，使得在这个空间下更特征参数更符合某种概率分布，压缩了特征参数值域的动态范围，减少了训练和测试环境的不匹配等
+  # 提升模型的鲁棒性，其实就是归一化的操作。
   local/nnet3/xvector/prepare_feats_for_egs.sh --nj 40 --cmd "$train_cmd" \
     data/train_combined data/train_combined_no_sil exp/train_combined_no_sil
   utils/fix_data_dir.sh data/train_combined_no_sil
 fi
 
 if [ $stage -le 5 ]; then
+  # 阶段5，过滤掉一些不符合要求的训练集样本
   # Now, we need to remove features that are too short after removing silence
   # frames.  We want atleast 5s (500 frames) per utterance.
+  # 现在，我们需要删除在删除静音帧之后太短的特征。我们希望每个话语至少大于5秒（500帧）。
   min_len=400
   mv data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2num_frames.bak
-  awk -v min_len=${min_len} '$2 > min_len {print $1, $2}' data/train_combined_no_sil/utt2num_frames.bak > data/train_combined_no_sil/utt2num_frames
-  utils/filter_scp.pl data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2spk > data/train_combined_no_sil/utt2spk.new
+  awk -v min_len=${min_len} '$2 > min_len {print $1, $2}' data/train_combined_no_sil/utt2num_frames.bak >data/train_combined_no_sil/utt2num_frames
+  utils/filter_scp.pl data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2spk >data/train_combined_no_sil/utt2spk.new
   mv data/train_combined_no_sil/utt2spk.new data/train_combined_no_sil/utt2spk
   utils/fix_data_dir.sh data/train_combined_no_sil
 
   # We also want several utterances per speaker. Now we'll throw out speakers
   # with fewer than 8 utterances.
+  # 我们还希望每个发言者说几句话。现在，我们将淘汰讲话少于8个的演讲者。
   min_num_utts=8
-  awk '{print $1, NF-1}' data/train_combined_no_sil/spk2utt > data/train_combined_no_sil/spk2num
-  awk -v min_num_utts=${min_num_utts} '$2 >= min_num_utts {print $1, $2}' data/train_combined_no_sil/spk2num | utils/filter_scp.pl - data/train_combined_no_sil/spk2utt > data/train_combined_no_sil/spk2utt.new
+  awk '{print $1, NF-1}' data/train_combined_no_sil/spk2utt >data/train_combined_no_sil/spk2num
+  awk -v min_num_utts=${min_num_utts} '$2 >= min_num_utts {print $1, $2}' data/train_combined_no_sil/spk2num | utils/filter_scp.pl - data/train_combined_no_sil/spk2utt >data/train_combined_no_sil/spk2utt.new
   mv data/train_combined_no_sil/spk2utt.new data/train_combined_no_sil/spk2utt
-  utils/spk2utt_to_utt2spk.pl data/train_combined_no_sil/spk2utt > data/train_combined_no_sil/utt2spk
+  utils/spk2utt_to_utt2spk.pl data/train_combined_no_sil/spk2utt >data/train_combined_no_sil/utt2spk
 
-  utils/filter_scp.pl data/train_combined_no_sil/utt2spk data/train_combined_no_sil/utt2num_frames > data/train_combined_no_sil/utt2num_frames.new
+  utils/filter_scp.pl data/train_combined_no_sil/utt2spk data/train_combined_no_sil/utt2num_frames >data/train_combined_no_sil/utt2num_frames.new
   mv data/train_combined_no_sil/utt2num_frames.new data/train_combined_no_sil/utt2num_frames
 
   # Now we're ready to create training examples.
+  # 现在，我们准备创建训练集。
   utils/fix_data_dir.sh data/train_combined_no_sil
 fi
 
 # Stages 6 through 8 are handled in run_xvector.sh
+# 阶段6到8在run_xvector.sh中处理，准备x-vector
 local/nnet3/xvector/run_xvector.sh --stage $stage --train-stage -1 \
   --data data/train_combined_no_sil --nnet-dir $nnet_dir \
   --egs-dir $nnet_dir/egs
 
 if [ $stage -le 9 ]; then
+  # 阶段9，提取x-vector
   # Extract x-vectors for centering, LDA, and PLDA training.
+  # 提取x-vector用于中心化、LDA和PLDA训练。
   sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 80 \
     $nnet_dir data/train \
     $nnet_dir/xvectors_train
 
   # Extract x-vectors used in the evaluation.
+  # 提取评估中使用的x-vector。
   sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 40 \
     $nnet_dir data/voxceleb1_test \
     $nnet_dir/xvectors_voxceleb1_test
 fi
 
 if [ $stage -le 10 ]; then
+  # 阶段10，entering, LDA, and PLDA。
   # Compute the mean vector for centering the evaluation xvectors.
+  # 计算评估x-vector归一化的平均矢量。
   $train_cmd $nnet_dir/xvectors_train/log/compute_mean.log \
     ivector-mean scp:$nnet_dir/xvectors_train/xvector.scp \
-    $nnet_dir/xvectors_train/mean.vec || exit 1;
+    $nnet_dir/xvectors_train/mean.vec || exit 1
 
   # This script uses LDA to decrease the dimensionality prior to PLDA.
+  # 此脚本在PLDA之前使用LDA降维。
   lda_dim=200
   $train_cmd $nnet_dir/xvectors_train/log/lda.log \
     ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
     "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- |" \
-    ark:data/train/utt2spk $nnet_dir/xvectors_train/transform.mat || exit 1;
+    ark:data/train/utt2spk $nnet_dir/xvectors_train/transform.mat || exit 1
 
   # Train the PLDA model.
+  # 训练PLDA模型。
   $train_cmd $nnet_dir/xvectors_train/log/plda.log \
     ivector-compute-plda ark:data/train/spk2utt \
     "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
-    $nnet_dir/xvectors_train/plda || exit 1;
+    $nnet_dir/xvectors_train/plda || exit 1
 fi
 
 if [ $stage -le 11 ]; then
+  # 阶段11，测试
   $train_cmd exp/scores/log/voxceleb1_test_scoring.log \
     ivector-plda-scoring --normalize-length=true \
     "ivector-copy-plda --smoothing=0.0 $nnet_dir/xvectors_train/plda - |" \
     "ark:ivector-subtract-global-mean $nnet_dir/xvectors_train/mean.vec scp:$nnet_dir/xvectors_voxceleb1_test/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "ark:ivector-subtract-global-mean $nnet_dir/xvectors_train/mean.vec scp:$nnet_dir/xvectors_voxceleb1_test/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" exp/scores_voxceleb1_test || exit 1;
+    "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" exp/scores_voxceleb1_test || exit 1
 fi
 
 if [ $stage -le 12 ]; then
-  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials exp/scores_voxceleb1_test) 2> /dev/null`
-  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 exp/scores_voxceleb1_test $voxceleb1_trials 2> /dev/null`
-  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 exp/scores_voxceleb1_test $voxceleb1_trials 2> /dev/null`
+  # 阶段12，得到EER。
+  eer=$(compute-eer <(local/prepare_for_eer.py $voxceleb1_trials exp/scores_voxceleb1_test) 2>/dev/null)
+  mindcf1=$(sid/compute_min_dcf.py --p-target 0.01 exp/scores_voxceleb1_test $voxceleb1_trials 2>/dev/null)
+  mindcf2=$(sid/compute_min_dcf.py --p-target 0.001 exp/scores_voxceleb1_test $voxceleb1_trials 2>/dev/null)
   echo "EER: $eer%"
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"
