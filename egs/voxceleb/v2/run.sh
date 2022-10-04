@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Copyright   2017   Johns Hopkins University (Author: Daniel Garcia-Romero)
 #             2017   Johns Hopkins University (Author: Daniel Povey)
 #        2017-2018   David Snyder
@@ -6,61 +6,44 @@
 # Apache 2.0.
 #
 # See ../README.txt for more info on data required.
-# 请参阅../README.txt获取所需数据的更多信息。
 # Results (mostly equal error-rates) are inline in comments below.
-# 结果（大部分是EER指标）在下面的注释中显示。
 
-# 运行./cmd.sh。目的是设置队列的类型。queue.pl/slurm.pl：执行程序需要排队；run.pl：无需排队（但可能会消耗大量内存）。
 . ./cmd.sh
-# 运行./path.sh。目的是导入kaldi库的根目录以及其他目录。
 . ./path.sh
-# Linux里面set-e命令作用是，如果一个命令返回一个非0退出状态值(失败)，就退出，不会继续执行。
 set -e
-# Mel频率倒谱系数(Mel Frequency Cepstrum Coefficient,MFCC)
-# mfcc文件的存放路径
-mfccdir=$(pwd)/mfcc
-# VAD，语音活动检测(Voice Activity Detection,VAD)又称语音端点检测,语音边界检测。目的是从声音信号流里识别和消除长时间的静音期。
-# vad文件的存放路径
-vaddir=$(pwd)/mfcc
+mfccdir=`pwd`/mfcc
+vaddir=`pwd`/mfcc
 
-# The trials file is downloaded by local/make_voxceleb1_v2.pl.
-# 测试文件由local/make_voxceleb1_v2.pl下载。
-voxceleb1_trials=data/voxceleb1_test/trials
-voxceleb1_root=/export/corpora/VoxCeleb1
-voxceleb2_root=/export/corpora/VoxCeleb2
+
+# The trials file is downloaded by local/make_voxceleb1.pl.
+voxceleb1_trials=data/voxceleb1_test/trials_new
+voxceleb1_root=data/
+#voxceleb2_root=/export/corpora/VoxCeleb2
 nnet_dir=exp/xvector_nnet_1a
 musan_root=/export/corpora/JHU/musan
 
-# 用于标记算法运行到的阶段
-stage=0
+stage=10
 
 if [ $stage -le 0 ]; then
-  # 阶段0，下载数据集
-  local/make_voxceleb2.pl $voxceleb2_root dev data/voxceleb2_train
-  local/make_voxceleb2.pl $voxceleb2_root test data/voxceleb2_test
+#  local/make_voxceleb2.pl $voxceleb2_root dev data/voxceleb2_train
+#  local/make_voxceleb2.pl $voxceleb2_root test data/voxceleb2_test
   # This script creates data/voxceleb1_test and data/voxceleb1_train for latest version of VoxCeleb1.
-  # 此脚本为最新版本的voxceleb1创建data/voxceleb1_test和data/voxceleb1_train。
   # Our evaluation set is the test portion of VoxCeleb1.
-  # 我们的验证集是VoxCeleb1的测试集的一部分。
-  local/make_voxceleb1_v2.pl $voxceleb1_root dev data/voxceleb1_train
+#  local/make_voxceleb1_v2.pl $voxceleb1_root dev data/voxceleb1_train
+  echo '01'
   local/make_voxceleb1_v2.pl $voxceleb1_root test data/voxceleb1_test
+  echo '02'
   # if you downloaded the dataset soon after it was released, you will want to use the make_voxceleb1.pl script instead.
-  # 如果在数据集发布后不久就下载了它，那么应该改用makevoxceleb1.pl脚本。
   # local/make_voxceleb1.pl $voxceleb1_root data
   # We'll train on all of VoxCeleb2, plus the training portion of VoxCeleb1.
-  # 我们将对所有VoxCeleb2以及VoxCelet1的训练集训练。
   # This should give 7,323 speakers and 1,276,888 utterances.
-  # 包含7323名发言者和1,276,888人次发言。
-  utils/combine_data.sh data/train data/voxceleb2_train data/voxceleb2_test data/voxceleb1_train
+#  utils/combine_data.sh data/train data/voxceleb2_train data/voxceleb2_test data/voxceleb1_train
 fi
 
 if [ $stage -le 1 ]; then
-  # 阶段1，提取MFCC和VAD
   # Make MFCCs and compute the energy-based VAD for each dataset
-  # 生成MFCC并计算每个数据集的基于能量的VAD
-  # 梅尔倒谱系数（mfcc）
-  # 提取过程：连续语音--预加重--加窗分帧--FFT--MEL滤波器组--对数运算--DCT
-  for name in train voxceleb1_test; do
+  echo '11'
+  for name in voxceleb1_test; do
     steps/make_mfcc.sh --write-utt2num-frames true --mfcc-config conf/mfcc.conf --nj 40 --cmd "$train_cmd" \
       data/${name} exp/make_mfcc $mfccdir
     utils/fix_data_dir.sh data/${name}
@@ -68,208 +51,183 @@ if [ $stage -le 1 ]; then
       data/${name} exp/make_vad $vaddir
     utils/fix_data_dir.sh data/${name}
   done
+  echo '12'
 fi
 
-# In this section, we augment the VoxCeleb2 data with reverberation,
-# noise, music, and babble, and combine it with the clean data.
-# 在阶段中，我们将使用混响、噪音、音乐和杂音来增强VoxCeleb2数据，并将其与干净的数据相混合。【数据增广】
-if [ $stage -le 2 ]; then
-  # 阶段2，为训练集进行数据增广
-  frame_shift=0.01
-  awk -v frame_shift=$frame_shift '{print $1, $2*frame_shift;}' data/train/utt2num_frames >data/train/reco2dur
-
-  if [ ! -d "RIRS_NOISES" ]; then
-    # Download the package that includes the real RIRs, simulated RIRs, isotropic noises and point-source noises
-    # 下载包含real RIR、simulated RIR、各向同性噪声和点源噪声的软件包
-    # RIR_NOISES数据集， 见README.txt
-    wget --no-check-certificate http://www.openslr.org/resources/28/rirs_noises.zip
-    unzip rirs_noises.zip
-  fi
-
-  # Make a version with reverberated speech
-  # 制作带有回响语音的版本
-  rvb_opts=()
-  rvb_opts+=(--rir-set-parameters "0.5, RIRS_NOISES/simulated_rirs/smallroom/rir_list")
-  rvb_opts+=(--rir-set-parameters "0.5, RIRS_NOISES/simulated_rirs/mediumroom/rir_list")
-
-  # Make a reverberated version of the VoxCeleb2 list.  Note that we don't add any
-  # additive noise here.
-  # 制作VoxCeleb2列表的混响版本。请注意，我们这里没有添加任何附加噪声。
-  steps/data/reverberate_data_dir.py \
-    "${rvb_opts[@]}" \
-    --speech-rvb-probability 1 \
-    --pointsource-noise-addition-probability 0 \
-    --isotropic-noise-addition-probability 0 \
-    --num-replications 1 \
-    --source-sampling-rate 16000 \
-    data/train data/train_reverb
-  cp data/train/vad.scp data/train_reverb/
-  utils/copy_data_dir.sh --utt-suffix "-reverb" data/train_reverb data/train_reverb.new
-  rm -rf data/train_reverb
-  mv data/train_reverb.new data/train_reverb
-
-  # Prepare the MUSAN corpus, which consists of music, speech, and noise
-  # suitable for augmentation.
-  # 准备MUSAN数据集，该语料库由适合扩充的音乐、语音和噪音组成。
-  steps/data/make_musan.sh --sampling-rate 16000 $musan_root data
-
-  # Get the duration of the MUSAN recordings.  This will be used by the
-  # script augment_data_dir.py.
-  # 获取MUSAN录制的持续时间。这将由脚本augment_data_dir.py使用。
-  for name in speech noise music; do
-    utils/data/get_utt2dur.sh data/musan_${name}
-    mv data/musan_${name}/utt2dur data/musan_${name}/reco2dur
-  done
-
-  # Augment with musan_noise
-  # 添加musan_noise
-  steps/data/augment_data_dir.py --utt-suffix "noise" --fg-interval 1 --fg-snrs "15:10:5:0" --fg-noise-dir "data/musan_noise" data/train data/train_noise
-  # Augment with musan_music
-  # 添加musan_music
-  steps/data/augment_data_dir.py --utt-suffix "music" --bg-snrs "15:10:8:5" --num-bg-noises "1" --bg-noise-dir "data/musan_music" data/train data/train_music
-  # Augment with musan_speech
-  # 添加musan_speech
-  steps/data/augment_data_dir.py --utt-suffix "babble" --bg-snrs "20:17:15:13" --num-bg-noises "3:4:5:6:7" --bg-noise-dir "data/musan_speech" data/train data/train_babble
-
-  # Combine reverb, noise, music, and babble into one directory.
-  # 将混响、噪音、音乐和胡言乱语的数据组合到一个目录中。
-  utils/combine_data.sh data/train_aug data/train_reverb data/train_noise data/train_music data/train_babble
-fi
-
-if [ $stage -le 3 ]; then
-  # 阶段3，为增广数据集提MFCC特征
-  # Take a random subset of the augmentations
-  # 选取一个随机的数据增广子集
-  utils/subset_data_dir.sh data/train_aug 1000000 data/train_aug_1m
-  utils/fix_data_dir.sh data/train_aug_1m
-
-  # Make MFCCs for the augmented data.  Note that we do not compute a new
-  # vad.scp file here.  Instead, we use the vad.scp from the clean version of
-  # the list.
-  # 为增广数据集制作MFCC。注意，我们没有计算新的vad.scp文件。相反，我们使用列表的clean版本中的vad.scp（VAD不进行需要在增广数据集上提取）。
-  steps/make_mfcc.sh --mfcc-config conf/mfcc.conf --nj 40 --cmd "$train_cmd" \
-    data/train_aug_1m exp/make_mfcc $mfccdir
-
-  # Combine the clean and augmented VoxCeleb2 list.  This is now roughly
-  # double the size of the original clean list.
-  # 合并干净和增强的VoxCeleb2列表。这大约是原始clean列表大小的两倍。
-  utils/combine_data.sh data/train_combined data/train_aug_1m data/train
-fi
-
-# Now we prepare the features to generate examples for xvector training.
-# 现在我们准备xvector训练集的样本的特征。
-if [ $stage -le 4 ]; then
-  # 阶段4，准备样本特征
-  # This script applies CMVN and removes nonspeech frames.  Note that this is somewhat
-  # wasteful, as it roughly doubles the amount of training data on disk.  After
-  # creating training examples, this can be removed.
-  # 此脚本应用CMVN并删除非语音帧。请注意，这有点浪费，因为它大约使磁盘上的训练数据量增加了一倍。创建训练示例后，可以将其删除。
-  # CMVN，倒谱均值方差归一化
-  # 提取声学特征以后，将声学特征从一个空间转变成另一个空间，使得在这个空间下更特征参数更符合某种概率分布，压缩了特征参数值域的动态范围，减少了训练和测试环境的不匹配等
-  # 提升模型的鲁棒性，其实就是归一化的操作。
-  local/nnet3/xvector/prepare_feats_for_egs.sh --nj 40 --cmd "$train_cmd" \
-    data/train_combined data/train_combined_no_sil exp/train_combined_no_sil
-  utils/fix_data_dir.sh data/train_combined_no_sil
-fi
-
-if [ $stage -le 5 ]; then
-  # 阶段5，过滤掉一些不符合要求的训练集样本
-  # Now, we need to remove features that are too short after removing silence
-  # frames.  We want atleast 5s (500 frames) per utterance.
-  # 现在，我们需要删除在删除静音帧之后太短的特征。我们希望每个话语至少大于5秒（500帧）。
-  min_len=400
-  mv data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2num_frames.bak
-  awk -v min_len=${min_len} '$2 > min_len {print $1, $2}' data/train_combined_no_sil/utt2num_frames.bak >data/train_combined_no_sil/utt2num_frames
-  utils/filter_scp.pl data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2spk >data/train_combined_no_sil/utt2spk.new
-  mv data/train_combined_no_sil/utt2spk.new data/train_combined_no_sil/utt2spk
-  utils/fix_data_dir.sh data/train_combined_no_sil
-
-  # We also want several utterances per speaker. Now we'll throw out speakers
-  # with fewer than 8 utterances.
-  # 我们还希望每个发言者说几句话。现在，我们将淘汰讲话少于8个的演讲者。
-  min_num_utts=8
-  awk '{print $1, NF-1}' data/train_combined_no_sil/spk2utt >data/train_combined_no_sil/spk2num
-  awk -v min_num_utts=${min_num_utts} '$2 >= min_num_utts {print $1, $2}' data/train_combined_no_sil/spk2num | utils/filter_scp.pl - data/train_combined_no_sil/spk2utt >data/train_combined_no_sil/spk2utt.new
-  mv data/train_combined_no_sil/spk2utt.new data/train_combined_no_sil/spk2utt
-  utils/spk2utt_to_utt2spk.pl data/train_combined_no_sil/spk2utt >data/train_combined_no_sil/utt2spk
-
-  utils/filter_scp.pl data/train_combined_no_sil/utt2spk data/train_combined_no_sil/utt2num_frames >data/train_combined_no_sil/utt2num_frames.new
-  mv data/train_combined_no_sil/utt2num_frames.new data/train_combined_no_sil/utt2num_frames
-
-  # Now we're ready to create training examples.
-  # 现在，我们准备创建训练集。
-  utils/fix_data_dir.sh data/train_combined_no_sil
-fi
-
-# Stages 6 through 8 are handled in run_xvector.sh
-# 阶段6到8在run_xvector.sh中处理，准备x-vector
-local/nnet3/xvector/run_xvector.sh --stage $stage --train-stage -1 \
-  --data data/train_combined_no_sil --nnet-dir $nnet_dir \
-  --egs-dir $nnet_dir/egs
+## In this section, we augment the VoxCeleb2 data with reverberation,
+## noise, music, and babble, and combine it with the clean data.
+#if [ $stage -le 2 ]; then
+#  frame_shift=0.01
+#  awk -v frame_shift=$frame_shift '{print $1, $2*frame_shift;}' data/train/utt2num_frames > data/train/reco2dur
+#
+#  if [ ! -d "RIRS_NOISES" ]; then
+#    # Download the package that includes the real RIRs, simulated RIRs, isotropic noises and point-source noises
+#    wget --no-check-certificate http://www.openslr.org/resources/28/rirs_noises.zip
+#    unzip rirs_noises.zip
+#  fi
+#
+#  # Make a version with reverberated speech
+#  rvb_opts=()
+#  rvb_opts+=(--rir-set-parameters "0.5, RIRS_NOISES/simulated_rirs/smallroom/rir_list")
+#  rvb_opts+=(--rir-set-parameters "0.5, RIRS_NOISES/simulated_rirs/mediumroom/rir_list")
+#
+#  # Make a reverberated version of the VoxCeleb2 list.  Note that we don't add any
+#  # additive noise here.
+#  python steps/data/reverberate_data_dir.py \
+#    "${rvb_opts[@]}" \
+#    --speech-rvb-probability 1 \
+#    --pointsource-noise-addition-probability 0 \
+#    --isotropic-noise-addition-probability 0 \
+#    --num-replications 1 \
+#    --source-sampling-rate 16000 \
+#    data/train data/train_reverb
+#  cp data/train/vad.scp data/train_reverb/
+#  utils/copy_data_dir.sh --utt-suffix "-reverb" data/train_reverb data/train_reverb.new
+#  rm -rf data/train_reverb
+#  mv data/train_reverb.new data/train_reverb
+#
+#  # Prepare the MUSAN corpus, which consists of music, speech, and noise
+#  # suitable for augmentation.
+#  local/make_musan.sh $musan_root data
+#
+#  # Get the duration of the MUSAN recordings.  This will be used by the
+#  # script augment_data_dir.py.
+#  for name in speech noise music; do
+#    utils/data/get_utt2dur.sh data/musan_${name}
+#    mv data/musan_${name}/utt2dur data/musan_${name}/reco2dur
+#  done
+#
+#  # Augment with musan_noise
+#  python steps/data/augment_data_dir.py --utt-suffix "noise" --fg-interval 1 --fg-snrs "15:10:5:0" --fg-noise-dir "data/musan_noise" data/train data/train_noise
+#  # Augment with musan_music
+#  python steps/data/augment_data_dir.py --utt-suffix "music" --bg-snrs "15:10:8:5" --num-bg-noises "1" --bg-noise-dir "data/musan_music" data/train data/train_music
+#  # Augment with musan_speech
+#  python steps/data/augment_data_dir.py --utt-suffix "babble" --bg-snrs "20:17:15:13" --num-bg-noises "3:4:5:6:7" --bg-noise-dir "data/musan_speech" data/train data/train_babble
+#
+#  # Combine reverb, noise, music, and babble into one directory.
+#  utils/combine_data.sh data/train_aug data/train_reverb data/train_noise data/train_music data/train_babble
+#fi
+#
+#if [ $stage -le 3 ]; then
+#  # Take a random subset of the augmentations
+#  utils/subset_data_dir.sh data/train_aug 1000000 data/train_aug_1m
+#  utils/fix_data_dir.sh data/train_aug_1m
+#
+#  # Make MFCCs for the augmented data.  Note that we do not compute a new
+#  # vad.scp file here.  Instead, we use the vad.scp from the clean version of
+#  # the list.
+#  steps/make_mfcc.sh --mfcc-config conf/mfcc.conf --nj 40 --cmd "$train_cmd" \
+#    data/train_aug_1m exp/make_mfcc $mfccdir
+#
+#  # Combine the clean and augmented VoxCeleb2 list.  This is now roughly
+#  # double the size of the original clean list.
+#  utils/combine_data.sh data/train_combined data/train_aug_1m data/train
+#fi
+#
+## Now we prepare the features to generate examples for xvector training.
+#if [ $stage -le 4 ]; then
+#  # This script applies CMVN and removes nonspeech frames.  Note that this is somewhat
+#  # wasteful, as it roughly doubles the amount of training data on disk.  After
+#  # creating training examples, this can be removed.
+#  local/nnet3/xvector/prepare_feats_for_egs.sh --nj 40 --cmd "$train_cmd" \
+#    data/train_combined data/train_combined_no_sil exp/train_combined_no_sil
+#  utils/fix_data_dir.sh data/train_combined_no_sil
+#fi
+#
+#if [ $stage -le 5 ]; then
+#  # Now, we need to remove features that are too short after removing silence
+#  # frames.  We want atleast 5s (500 frames) per utterance.
+#  min_len=400
+#  mv data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2num_frames.bak
+#  awk -v min_len=${min_len} '$2 > min_len {print $1, $2}' data/train_combined_no_sil/utt2num_frames.bak > data/train_combined_no_sil/utt2num_frames
+#  utils/filter_scp.pl data/train_combined_no_sil/utt2num_frames data/train_combined_no_sil/utt2spk > data/train_combined_no_sil/utt2spk.new
+#  mv data/train_combined_no_sil/utt2spk.new data/train_combined_no_sil/utt2spk
+#  utils/fix_data_dir.sh data/train_combined_no_sil
+#
+#  # We also want several utterances per speaker. Now we'll throw out speakers
+#  # with fewer than 8 utterances.
+#  min_num_utts=8
+#  awk '{print $1, NF-1}' data/train_combined_no_sil/spk2utt > data/train_combined_no_sil/spk2num
+#  awk -v min_num_utts=${min_num_utts} '$2 >= min_num_utts {print $1, $2}' data/train_combined_no_sil/spk2num | utils/filter_scp.pl - data/train_combined_no_sil/spk2utt > data/train_combined_no_sil/spk2utt.new
+#  mv data/train_combined_no_sil/spk2utt.new data/train_combined_no_sil/spk2utt
+#  utils/spk2utt_to_utt2spk.pl data/train_combined_no_sil/spk2utt > data/train_combined_no_sil/utt2spk
+#
+#  utils/filter_scp.pl data/train_combined_no_sil/utt2spk data/train_combined_no_sil/utt2num_frames > data/train_combined_no_sil/utt2num_frames.new
+#  mv data/train_combined_no_sil/utt2num_frames.new data/train_combined_no_sil/utt2num_frames
+#
+#  # Now we're ready to create training examples.
+#  utils/fix_data_dir.sh data/train_combined_no_sil
+#fi
+#
+## Stages 6 through 8 are handled in run_xvector.sh
+#local/nnet3/xvector/run_xvector.sh --stage $stage --train-stage -1 \
+#  --data data/train_combined_no_sil --nnet-dir $nnet_dir \
+#  --egs-dir $nnet_dir/egs
 
 if [ $stage -le 9 ]; then
-  # 阶段9，提取x-vector
-  # Extract x-vectors for centering, LDA, and PLDA training.
-  # 提取x-vector用于中心化、LDA和PLDA训练。
-  sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 80 \
-    $nnet_dir data/train \
-    $nnet_dir/xvectors_train
-
+#  # Extract x-vectors for centering, LDA, and PLDA training.
+#  sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 80 \
+#    $nnet_dir data/train \
+#    $nnet_dir/xvectors_train
+  echo '91'
   # Extract x-vectors used in the evaluation.
-  # 提取评估中使用的x-vector。
   sid/nnet3/xvector/extract_xvectors.sh --cmd "$train_cmd --mem 4G" --nj 40 \
     $nnet_dir data/voxceleb1_test \
     $nnet_dir/xvectors_voxceleb1_test
+  echo '92'
 fi
 
-if [ $stage -le 10 ]; then
-  # 阶段10，entering, LDA, and PLDA。
-  # Compute the mean vector for centering the evaluation xvectors.
-  # 计算评估x-vector归一化的平均矢量。
-  $train_cmd $nnet_dir/xvectors_train/log/compute_mean.log \
-    ivector-mean scp:$nnet_dir/xvectors_train/xvector.scp \
-    $nnet_dir/xvectors_train/mean.vec || exit 1
-
-  # This script uses LDA to decrease the dimensionality prior to PLDA.
-  # 此脚本在PLDA之前使用LDA降维。
-  lda_dim=200
-  $train_cmd $nnet_dir/xvectors_train/log/lda.log \
-    ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
-    "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- |" \
-    ark:data/train/utt2spk $nnet_dir/xvectors_train/transform.mat || exit 1
-
-  # Train the PLDA model.
-  # 训练PLDA模型。
-  $train_cmd $nnet_dir/xvectors_train/log/plda.log \
-    ivector-compute-plda ark:data/train/spk2utt \
-    "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
-    $nnet_dir/xvectors_train/plda || exit 1
-fi
+#if [ $stage -le 10 ]; then
+#  # Compute the mean vector for centering the evaluation xvectors.
+#  echo '101'
+#  $train_cmd $nnet_dir/xvectors_train/log/compute_mean.log \
+#    ivector-mean scp:$nnet_dir/xvectors_train/xvector.scp \
+#    $nnet_dir/xvectors_train/mean.vec || exit 1;
+#  echo '102'
+#
+#  # This script uses LDA to decrease the dimensionality prior to PLDA.
+#  lda_dim=200
+#  $train_cmd $nnet_dir/xvectors_train/log/lda.log \
+#    ivector-compute-lda --total-covariance-factor=0.0 --dim=$lda_dim \
+#    "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- |" \
+#    ark:data/train/utt2spk $nnet_dir/xvectors_train/transform.mat || exit 1;
+#  echo '103'
+#  # Train the PLDA model.
+#  $train_cmd $nnet_dir/xvectors_train/log/plda.log \
+#    ivector-compute-plda ark:data/train/spk2utt \
+#    "ark:ivector-subtract-global-mean scp:$nnet_dir/xvectors_train/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:-  ark:- |" \
+#    $nnet_dir/xvectors_train/plda || exit 1;
+#  echo '104'
+#fi
 
 if [ $stage -le 11 ]; then
-  # 阶段11，测试
+  echo '111'
   $train_cmd exp/scores/log/voxceleb1_test_scoring.log \
     ivector-plda-scoring --normalize-length=true \
     "ivector-copy-plda --smoothing=0.0 $nnet_dir/xvectors_train/plda - |" \
     "ark:ivector-subtract-global-mean $nnet_dir/xvectors_train/mean.vec scp:$nnet_dir/xvectors_voxceleb1_test/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
     "ark:ivector-subtract-global-mean $nnet_dir/xvectors_train/mean.vec scp:$nnet_dir/xvectors_voxceleb1_test/xvector.scp ark:- | transform-vec $nnet_dir/xvectors_train/transform.mat ark:- ark:- | ivector-normalize-length ark:- ark:- |" \
-    "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" exp/scores_voxceleb1_test || exit 1
+    "cat '$voxceleb1_trials' | cut -d\  --fields=1,2 |" exp/scores_voxceleb1_test || exit 1;
+  echo '112'
 fi
 
 if [ $stage -le 12 ]; then
-  # 阶段12，得到EER。
-  eer=$(compute-eer <(local/prepare_for_eer.py $voxceleb1_trials exp/scores_voxceleb1_test) 2>/dev/null)
-  mindcf1=$(sid/compute_min_dcf.py --p-target 0.01 exp/scores_voxceleb1_test $voxceleb1_trials 2>/dev/null)
-  mindcf2=$(sid/compute_min_dcf.py --p-target 0.001 exp/scores_voxceleb1_test $voxceleb1_trials 2>/dev/null)
+  echo '121'
+  eer=`compute-eer <(local/prepare_for_eer.py $voxceleb1_trials exp/scores_voxceleb1_test) 2> /dev/null`
+  echo '122'
+  mindcf1=`sid/compute_min_dcf.py --p-target 0.01 exp/scores_voxceleb1_test $voxceleb1_trials 2> /dev/null`
+  echo '123'
+  mindcf2=`sid/compute_min_dcf.py --p-target 0.001 exp/scores_voxceleb1_test $voxceleb1_trials 2> /dev/null`
+  echo '124'
   echo "EER: $eer%"
   echo "minDCF(p-target=0.01): $mindcf1"
   echo "minDCF(p-target=0.001): $mindcf2"
-  # EER: 3.128%
-  # minDCF(p-target=0.01): 0.3258
-  # minDCF(p-target=0.001): 0.5003
+  # EER: 3.224%
+  # minDCF(p-target=0.01): 0.3492
+  # minDCF(p-target=0.001): 0.5452
   #
   # For reference, here's the ivector system from ../v1:
-  # EER: 5.329%
-  # minDCF(p-target=0.01): 0.4933
-  # minDCF(p-target=0.001): 0.6168
+  # EER: 5.419%
+  # minDCF(p-target=0.01): 0.4701
+  # minDCF(p-target=0.001): 0.5981
 fi
