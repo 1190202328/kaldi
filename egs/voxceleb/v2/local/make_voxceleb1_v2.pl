@@ -73,12 +73,15 @@ if ($dataset eq "test"){
     my ($tar_or_non, $path1, $path2) = split;
     # Create entry for left-hand side of trial
     my ($spkr_id, $rec_id, $name) = split('/', $path1);
-    my $utt_id1 = "$spkr_id-$rec_id-$name";
+    my ($name_pre, $name_after) = split('\.', $name); # 注意要加\，否则会当作正则表达式
+
+    my $utt_id1 = "$spkr_id-$rec_id-$name_pre";
     $test_spkrs{$spkr_id} = ();
 
     # Create entry for right-hand side of trial
     my ($spkr_id, $rec_id, $name) = split('/', $path2);
-    my $utt_id2 = "$spkr_id-$rec_id-$name";
+    my ($name_pre, $name_after) = split('\.', $name);
+    my $utt_id2 = "$spkr_id-$rec_id-$name_pre";
     $test_spkrs{$spkr_id} = ();
 
     my $target = "nontarget";
