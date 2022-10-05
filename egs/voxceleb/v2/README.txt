@@ -27,7 +27,7 @@
                               at the time of uploading this file.  Look at this
                               to see examples of computing features and 
                               extracting x-vectors.
-				# egs/voxceleb/v2/run的副本。在上载此文件时显示。看看这里，可以看到计算特征和提取x矢量的示例。
+				# egs/voxceleb/v2/run的副本。在上载此文件时显示。可以看到计算特征和提取x-vector示例。
 
  local/nnet3/xvector/tuning/
      run_xvector_1a.sh        This is the default recipe, at the time of
